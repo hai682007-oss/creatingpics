@@ -1,0 +1,621 @@
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { motion } from "framer-motion";
+import { Upload, Image as ImageIcon, Wand2, Video, Download, Settings2, Sparkles, Trash2 } from "lucide-react";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Slider } from "@/components/ui/slider";
+import { Badge } from "@/components/ui/badge";
+import { Separator } from "@/components/ui/separator";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+
+const defaultComposePrompt = `Đặt sản phẩm vào bối cảnh một cách tự nhiên, đúng phối cảnh, ánh sáng ăn khớp với nền, bóng đổ chân thật, phản xạ hợp lý, giữ nguyên nhận diện sản phẩm, tăng độ chi tiết bề mặt, photorealistic, high-end commercial product photography, realistic contact shadow, natural depth, no distortion, no extra objects.`;
+
+const defaultImagePrompt = `Dùng ảnh tham chiếu để tạo hình thật như chụp studio, ánh sáng đẹp, chi tiết sắc nét, vật liệu trung thực, không méo hình, không sai logo, không thêm vật thể thừa.`;
+
+const defaultVideoPrompt = `Tạo video ngắn chuyển động điện ảnh, camera dolly nhẹ, ánh sáng tự nhiên, giữ sản phẩm đúng hình dáng, chuyển động mượt, photorealistic, commercial ad style.`;
+
+const presetPrompts = [
+  {
+    name: "Quảng cáo mỹ phẩm",
+    text: "Đặt sản phẩm mỹ phẩm vào background sang trọng, ánh sáng mềm, phản xạ tinh tế, mặt bàn sạch, phong cách premium beauty campaign, photorealistic, realistic shadow, luxury commercial shot.",
+  },
+  {
+    name: "Đồ uống lạnh",
+    text: "Ghép lon/chai nước vào khung cảnh lạnh, có hơi nước tự nhiên, phản chiếu thật, ánh sáng viền đẹp, bề mặt kim loại/chai chân thật, như ảnh chụp quảng cáo.",
+  },
+  {
+    name: "Nội thất",
+    text: "Đặt sản phẩm nội thất vào không gian hiện đại, phối cảnh chuẩn, ánh sáng cửa sổ tự nhiên, vật liệu gỗ/vải/kim loại chân thật, bóng đổ hợp cảnh, photorealistic.",
+  },
+  {
+    name: "Thời trang",
+    text: "Đưa sản phẩm thời trang vào bối cảnh editorial cao cấp, ánh sáng cinematic, giữ đúng màu chất liệu, texture chân thật, ảnh như chụp bởi nhiếp ảnh gia thương mại.",
+  },
+];
+
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+function downloadDataURL(dataURL, filename) {
+  const a = document.createElement("a");
+  a.href = dataURL;
+  a.download = filename;
+  a.click();
+}
+
+function cn(...classes) {
+  return classes.filter(Boolean).join(" ");
+}
+
+function UploadBox({ title, subtitle, onChange, preview, accept = "image/*" }) {
+  return (
+    <label className="block cursor-pointer">
+      <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-5 transition hover:bg-slate-100">
+        <div className="flex items-center gap-3">
+          <div className="rounded-2xl bg-white p-3 shadow-sm">
+            <Upload className="h-5 w-5" />
+          </div>
+          <div>
+            <div className="font-medium">{title}</div>
+            <div className="text-sm text-slate-500">{subtitle}</div>
+          </div>
+        </div>
+        {preview ? (
+          <div className="mt-4 overflow-hidden rounded-2xl border bg-white">
+            <img src={preview} alt={title} className="h-48 w-full object-cover" />
+          </div>
+        ) : (
+          <div className="mt-4 flex h-48 items-center justify-center rounded-2xl border bg-white text-sm text-slate-400">
+            Chưa có tệp nào
+          </div>
+        )}
+      </div>
+      <input
+        type="file"
+        accept={accept}
+        className="hidden"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file) onChange(file);
+        }}
+      />
+    </label>
+  );
+}
+
+function SectionTitle({ icon: Icon, title, desc }) {
+  return (
+    <div className="flex items-start gap-3">
+      <div className="rounded-2xl bg-slate-100 p-3">
+        <Icon className="h-5 w-5" />
+      </div>
+      <div>
+        <div className="text-lg font-semibold">{title}</div>
+        <div className="text-sm text-slate-500">{desc}</div>
+      </div>
+    </div>
+  );
+}
+
+export default function AICompositeStudio() {
+  const canvasRef = useRef(null);
+  const [tab, setTab] = useState("compose");
+  const [backgroundFile, setBackgroundFile] = useState(null);
+  const [productFile, setProductFile] = useState(null);
+  const [referenceFile, setReferenceFile] = useState(null);
+  const [backgroundPreview, setBackgroundPreview] = useState("");
+  const [productPreview, setProductPreview] = useState("");
+  const [referencePreview, setReferencePreview] = useState("");
+  const [composePrompt, setComposePrompt] = useState(defaultComposePrompt);
+  const [imagePrompt, setImagePrompt] = useState(defaultImagePrompt);
+  const [videoPrompt, setVideoPrompt] = useState(defaultVideoPrompt);
+  const [scale, setScale] = useState([38]);
+  const [posX, setPosX] = useState([50]);
+  const [posY, setPosY] = useState([72]);
+  const [shadowBlur, setShadowBlur] = useState([24]);
+  const [shadowOpacity, setShadowOpacity] = useState([28]);
+  const [rotation, setRotation] = useState([0]);
+  const [softness, setSoftness] = useState([0]);
+  const [apiMode, setApiMode] = useState("demo");
+  const [imageModel, setImageModel] = useState("photoreal-v1");
+  const [videoModel, setVideoModel] = useState("cinematic-video-v1");
+  const [endpoint, setEndpoint] = useState("https://your-backend.example.com/api/generate");
+  const [apiKey, setApiKey] = useState("");
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [resultImage, setResultImage] = useState("");
+  const [videoStatus, setVideoStatus] = useState("Chưa tạo video");
+  const [transparentBg, setTransparentBg] = useState(false);
+  const [hdEnhance, setHdEnhance] = useState(true);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    const bg = new window.Image();
+    const product = new window.Image();
+
+    const render = async () => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = "#f8fafc";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      if (backgroundPreview) {
+        bg.src = backgroundPreview;
+        await new Promise((resolve) => {
+          bg.onload = resolve;
+        });
+        const scaleBg = Math.max(canvas.width / bg.width, canvas.height / bg.height);
+        const drawW = bg.width * scaleBg;
+        const drawH = bg.height * scaleBg;
+        const dx = (canvas.width - drawW) / 2;
+        const dy = (canvas.height - drawH) / 2;
+        ctx.drawImage(bg, dx, dy, drawW, drawH);
+      }
+
+      if (productPreview) {
+        product.src = productPreview;
+        await new Promise((resolve) => {
+          product.onload = resolve;
+        });
+        const w = (canvas.width * scale[0]) / 100;
+        const ratio = product.height / product.width;
+        const h = w * ratio;
+        const x = (canvas.width * posX[0]) / 100 - w / 2;
+        const y = (canvas.height * posY[0]) / 100 - h / 2;
+        const centerX = x + w / 2;
+        const centerY = y + h / 2;
+
+        ctx.save();
+        ctx.translate(centerX, centerY);
+        ctx.rotate((rotation[0] * Math.PI) / 180);
+
+        ctx.shadowColor = `rgba(0,0,0,${shadowOpacity[0] / 100})`;
+        ctx.shadowBlur = shadowBlur[0];
+        ctx.shadowOffsetY = Math.max(8, shadowBlur[0] / 2);
+
+        if (softness[0] > 0) {
+          ctx.filter = `blur(${softness[0] / 8}px)`;
+        }
+
+        ctx.drawImage(product, -w / 2, -h / 2, w, h);
+        ctx.restore();
+        ctx.filter = "none";
+      }
+
+      const grad = ctx.createLinearGradient(0, canvas.height * 0.65, 0, canvas.height);
+      grad.addColorStop(0, "rgba(255,255,255,0)");
+      grad.addColorStop(1, "rgba(15,23,42,0.12)");
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    };
+
+    render();
+  }, [backgroundPreview, productPreview, scale, posX, posY, shadowBlur, shadowOpacity, rotation, softness]);
+
+  const presetQualityLabel = useMemo(() => {
+    if (!hdEnhance) return "Tiêu chuẩn";
+    if (apiMode === "demo") return "Preview đẹp";
+    return "Ưu tiên siêu chân thật";
+  }, [hdEnhance, apiMode]);
+
+  const handleUploadBackground = async (file) => {
+    setBackgroundFile(file);
+    setBackgroundPreview(await fileToDataUrl(file));
+  };
+
+  const handleUploadProduct = async (file) => {
+    setProductFile(file);
+    setProductPreview(await fileToDataUrl(file));
+  };
+
+  const handleUploadReference = async (file) => {
+    setReferenceFile(file);
+    setReferencePreview(await fileToDataUrl(file));
+  };
+
+  const exportPreview = () => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const data = canvas.toDataURL("image/png");
+    downloadDataURL(data, `ai-composite-${Date.now()}.png`);
+  };
+
+  const clearAll = () => {
+    setBackgroundFile(null);
+    setProductFile(null);
+    setReferenceFile(null);
+    setBackgroundPreview("");
+    setProductPreview("");
+    setReferencePreview("");
+    setResultImage("");
+    setVideoStatus("Chưa tạo video");
+  };
+
+  const generateImage = async (mode) => {
+    setIsGenerating(true);
+    try {
+      if (apiMode === "demo") {
+        await new Promise((resolve) => setTimeout(resolve, 1200));
+        const canvas = canvasRef.current;
+        if (mode === "compose" && canvas) {
+          setResultImage(canvas.toDataURL("image/png"));
+        } else if (referencePreview) {
+          setResultImage(referencePreview);
+        } else if (productPreview) {
+          setResultImage(productPreview);
+        }
+        return;
+      }
+
+      const payload = {
+        mode,
+        prompt: mode === "compose" ? composePrompt : imagePrompt,
+        imageModel,
+        hdEnhance,
+        transparentBg,
+        files: {
+          background: backgroundFile?.name || null,
+          product: productFile?.name || null,
+          reference: referenceFile?.name || null,
+        },
+        notes: {
+          recommendation:
+            "Ở backend, hãy gửi background + product/reference vào pipeline image editing hoặc inpainting để tạo ảnh photorealistic. Có thể thêm bước relight, shadow grounding, upscale, consistency check.",
+        },
+      };
+
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: apiKey ? `Bearer ${apiKey}` : "",
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) throw new Error("Gọi API thất bại");
+      const data = await response.json();
+      if (data.imageUrl) setResultImage(data.imageUrl);
+      else throw new Error("API chưa trả imageUrl");
+    } catch (error) {
+      alert(error.message || "Không thể tạo ảnh");
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const generateVideo = async () => {
+    setIsGenerating(true);
+    try {
+      if (apiMode === "demo") {
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        setVideoStatus("Demo: backend video chưa nối. UI đã sẵn sàng để tích hợp image-to-video.");
+        return;
+      }
+
+      const payload = {
+        mode: "video",
+        prompt: videoPrompt,
+        videoModel,
+        imageSource: resultImage || referenceFile?.name || productFile?.name || null,
+        notes: {
+          recommendation:
+            "Ở backend, nhận ảnh keyframe và prompt, chạy image-to-video model, sau đó trả về videoUrl hoặc jobId để poll trạng thái.",
+        },
+      };
+
+      const response = await fetch(endpoint.replace(/\/$/, "") + "/video", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: apiKey ? `Bearer ${apiKey}` : "",
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) throw new Error("Gọi API video thất bại");
+      const data = await response.json();
+      setVideoStatus(data.videoUrl ? `Đã tạo video: ${data.videoUrl}` : "Đã gửi yêu cầu tạo video");
+    } catch (error) {
+      setVideoStatus(error.message || "Không thể tạo video");
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-100 p-4 md:p-8">
+      <div className="mx-auto max-w-7xl space-y-6">
+        <motion.div
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="overflow-hidden rounded-[28px] border bg-white shadow-sm"
+        >
+          <div className="grid gap-6 p-6 md:grid-cols-[1.25fr_0.75fr] md:p-8">
+            <div className="space-y-4">
+              <Badge className="rounded-full px-3 py-1 text-xs">AI Product Composite Studio</Badge>
+              <div className="space-y-2">
+                <h1 className="text-3xl font-bold tracking-tight md:text-5xl">
+                  Web ghép ảnh và tạo ảnh/video chân thật từ ảnh có sẵn
+                </h1>
+                <p className="max-w-3xl text-base text-slate-600 md:text-lg">
+                  Tối ưu cho workflow: 1 ảnh nền + 1 ảnh sản phẩm + prompt cố định để tự động ghép như ảnh quảng cáo thật. Ngoài ra vẫn có chế độ tạo ảnh khác từ ảnh tham chiếu, và đã chừa sẵn luồng image-to-video để nâng cấp thành video quảng cáo.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-3">
+                <Badge variant="secondary" className="rounded-full px-3 py-1">Photorealistic workflow</Badge>
+                <Badge variant="secondary" className="rounded-full px-3 py-1">Preset prompt</Badge>
+                <Badge variant="secondary" className="rounded-full px-3 py-1">Canvas preview</Badge>
+                <Badge variant="secondary" className="rounded-full px-3 py-1">Sẵn chỗ nối API ảnh/video</Badge>
+              </div>
+            </div>
+            <Card className="rounded-[24px] border-slate-200 shadow-none">
+              <CardHeader>
+                <CardTitle className="text-xl">Mức độ sẵn sàng</CardTitle>
+                <CardDescription>
+                  Bản này chạy được giao diện + preview ghép ảnh trong trình duyệt. Chỉ cần nối backend AI là lên bản production.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4 text-sm text-slate-600">
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="rounded-2xl bg-slate-50 p-4">
+                    <div className="text-2xl font-semibold text-slate-900">2 ảnh</div>
+                    <div>Background + sản phẩm</div>
+                  </div>
+                  <div className="rounded-2xl bg-slate-50 p-4">
+                    <div className="text-2xl font-semibold text-slate-900">3 chế độ</div>
+                    <div>Ghép ảnh, tạo ảnh, tạo video</div>
+                  </div>
+                </div>
+                <div className="rounded-2xl bg-slate-50 p-4">
+                  <div className="font-medium text-slate-900">Workflow gợi ý để ảnh thật hơn</div>
+                  <div className="mt-2 leading-6">
+                    Tách nền sản phẩm sạch → harmonize ánh sáng → đổ bóng tiếp xúc → upscale → consistency check logo/màu/chất liệu → xuất PNG/JPG/video.
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </motion.div>
+
+        <div className="grid gap-6 xl:grid-cols-[1.15fr_0.85fr]">
+          <Card className="rounded-[28px] border-0 shadow-sm">
+            <CardHeader>
+              <SectionTitle icon={Sparkles} title="Studio điều khiển" desc="Thiết lập workflow và prompt cố định cho việc ghép ảnh hoặc tạo ảnh/video." />
+            </CardHeader>
+            <CardContent>
+              <Tabs value={tab} onValueChange={setTab} className="space-y-6">
+                <TabsList className="grid w-full grid-cols-3 rounded-2xl">
+                  <TabsTrigger value="compose">Ghép ảnh</TabsTrigger>
+                  <TabsTrigger value="image">Tạo ảnh</TabsTrigger>
+                  <TabsTrigger value="video">Tạo video</TabsTrigger>
+                </TabsList>
+
+                <TabsContent value="compose" className="space-y-6">
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <UploadBox title="Ảnh background" subtitle="Nền bối cảnh để đặt sản phẩm vào" onChange={handleUploadBackground} preview={backgroundPreview} />
+                    <UploadBox title="Ảnh sản phẩm" subtitle="PNG nền trong hoặc ảnh cắt sẵn sẽ đẹp hơn" onChange={handleUploadProduct} preview={productPreview} />
+                  </div>
+
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between">
+                      <Label>Prompt ghép cố định</Label>
+                      <div className="flex flex-wrap gap-2">
+                        {presetPrompts.map((preset) => (
+                          <button
+                            key={preset.name}
+                            onClick={() => setComposePrompt(preset.text)}
+                            className="rounded-full border px-3 py-1 text-xs transition hover:bg-slate-50"
+                          >
+                            {preset.name}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <Textarea value={composePrompt} onChange={(e) => setComposePrompt(e.target.value)} className="min-h-[132px] rounded-2xl" />
+                  </div>
+
+                  <div className="grid gap-5 md:grid-cols-2">
+                    <div className="space-y-4 rounded-3xl border p-4">
+                      <div>
+                        <Label>Tỉ lệ sản phẩm</Label>
+                        <Slider value={scale} onValueChange={setScale} min={10} max={80} step={1} className="mt-3" />
+                        <div className="mt-2 text-sm text-slate-500">{scale[0]}%</div>
+                      </div>
+                      <div>
+                        <Label>Vị trí ngang</Label>
+                        <Slider value={posX} onValueChange={setPosX} min={5} max={95} step={1} className="mt-3" />
+                        <div className="mt-2 text-sm text-slate-500">{posX[0]}%</div>
+                      </div>
+                      <div>
+                        <Label>Vị trí dọc</Label>
+                        <Slider value={posY} onValueChange={setPosY} min={5} max={95} step={1} className="mt-3" />
+                        <div className="mt-2 text-sm text-slate-500">{posY[0]}%</div>
+                      </div>
+                      <div>
+                        <Label>Xoay nhẹ</Label>
+                        <Slider value={rotation} onValueChange={setRotation} min={-25} max={25} step={1} className="mt-3" />
+                        <div className="mt-2 text-sm text-slate-500">{rotation[0]}°</div>
+                      </div>
+                    </div>
+
+                    <div className="space-y-4 rounded-3xl border p-4">
+                      <div>
+                        <Label>Độ mờ bóng</Label>
+                        <Slider value={shadowBlur} onValueChange={setShadowBlur} min={0} max={80} step={1} className="mt-3" />
+                        <div className="mt-2 text-sm text-slate-500">{shadowBlur[0]}</div>
+                      </div>
+                      <div>
+                        <Label>Độ đậm bóng</Label>
+                        <Slider value={shadowOpacity} onValueChange={setShadowOpacity} min={0} max={80} step={1} className="mt-3" />
+                        <div className="mt-2 text-sm text-slate-500">{shadowOpacity[0]}%</div>
+                      </div>
+                      <div>
+                        <Label>Độ mềm viền</Label>
+                        <Slider value={softness} onValueChange={setSoftness} min={0} max={24} step={1} className="mt-3" />
+                        <div className="mt-2 text-sm text-slate-500">{softness[0]}</div>
+                      </div>
+                      <div className="flex items-center justify-between rounded-2xl bg-slate-50 p-3">
+                        <div>
+                          <div className="font-medium">Nâng chất lượng</div>
+                          <div className="text-sm text-slate-500">{presetQualityLabel}</div>
+                        </div>
+                        <Switch checked={hdEnhance} onCheckedChange={setHdEnhance} />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap gap-3">
+                    <Button className="rounded-2xl" onClick={() => generateImage("compose")} disabled={isGenerating || !backgroundPreview || !productPreview}>
+                      <Wand2 className="mr-2 h-4 w-4" />
+                      {isGenerating ? "Đang xử lý..." : "Tạo ảnh ghép"}
+                    </Button>
+                    <Button variant="secondary" className="rounded-2xl" onClick={exportPreview}>
+                      <Download className="mr-2 h-4 w-4" />
+                      Xuất preview
+                    </Button>
+                    <Button variant="ghost" className="rounded-2xl" onClick={clearAll}>
+                      <Trash2 className="mr-2 h-4 w-4" />
+                      Xóa hết
+                    </Button>
+                  </div>
+                </TabsContent>
+
+                <TabsContent value="image" className="space-y-6">
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <UploadBox title="Ảnh tham chiếu" subtitle="Ảnh nguồn để AI biến đổi theo yêu cầu" onChange={handleUploadReference} preview={referencePreview} />
+                    <UploadBox title="Ảnh sản phẩm bổ sung" subtitle="Dùng thêm khi cần giữ nhận diện sản phẩm" onChange={handleUploadProduct} preview={productPreview} />
+                  </div>
+                  <div className="space-y-3">
+                    <Label>Prompt tạo ảnh</Label>
+                    <Textarea value={imagePrompt} onChange={(e) => setImagePrompt(e.target.value)} className="min-h-[140px] rounded-2xl" />
+                  </div>
+                  <div className="flex items-center justify-between rounded-2xl border p-4">
+                    <div>
+                      <div className="font-medium">Giữ nền trong suốt nếu model hỗ trợ</div>
+                      <div className="text-sm text-slate-500">Phù hợp khi cần xuất asset sản phẩm riêng</div>
+                    </div>
+                    <Switch checked={transparentBg} onCheckedChange={setTransparentBg} />
+                  </div>
+                  <Button className="rounded-2xl" onClick={() => generateImage("image")} disabled={isGenerating || (!referencePreview && !productPreview)}>
+                    <ImageIcon className="mr-2 h-4 w-4" />
+                    {isGenerating ? "Đang tạo..." : "Tạo ảnh từ ảnh có sẵn"}
+                  </Button>
+                </TabsContent>
+
+                <TabsContent value="video" className="space-y-6">
+                  <div className="rounded-3xl border p-4">
+                    <div className="space-y-3">
+                      <Label>Prompt tạo video</Label>
+                      <Textarea value={videoPrompt} onChange={(e) => setVideoPrompt(e.target.value)} className="min-h-[140px] rounded-2xl" />
+                    </div>
+                    <div className="mt-4 rounded-2xl bg-slate-50 p-4 text-sm text-slate-600">
+                      Luồng đề xuất: dùng ảnh kết quả hoặc ảnh tham chiếu làm keyframe đầu vào → chạy image-to-video → xuất clip 3–8 giây → upscale/fps enhancement nếu cần.
+                    </div>
+                    <Button className="mt-4 rounded-2xl" onClick={generateVideo} disabled={isGenerating || (!resultImage && !referencePreview && !productPreview)}>
+                      <Video className="mr-2 h-4 w-4" />
+                      {isGenerating ? "Đang tạo video..." : "Tạo video từ ảnh"}
+                    </Button>
+                    <div className="mt-4 text-sm text-slate-500">{videoStatus}</div>
+                  </div>
+                </TabsContent>
+              </Tabs>
+            </CardContent>
+          </Card>
+
+          <div className="space-y-6">
+            <Card className="rounded-[28px] border-0 shadow-sm">
+              <CardHeader>
+                <SectionTitle icon={ImageIcon} title="Preview ghép ảnh" desc="Canvas chạy ngay trong trình duyệt để canh bố cục trước khi gọi AI photorealistic." />
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="overflow-hidden rounded-[24px] border bg-slate-50">
+                  <canvas ref={canvasRef} width={1200} height={1200} className="h-auto w-full" />
+                </div>
+                {resultImage && (
+                  <div className="space-y-3">
+                    <div className="text-sm font-medium">Kết quả gần nhất</div>
+                    <div className="overflow-hidden rounded-[24px] border">
+                      <img src={resultImage} alt="Kết quả" className="w-full object-cover" />
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card className="rounded-[28px] border-0 shadow-sm">
+              <CardHeader>
+                <SectionTitle icon={Settings2} title="Thiết lập backend AI" desc="Nối API thật để tạo ảnh/video siêu chân thật ở môi trường production." />
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label>Chế độ</Label>
+                    <Select value={apiMode} onValueChange={setApiMode}>
+                      <SelectTrigger className="rounded-2xl">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="demo">Demo local</SelectItem>
+                        <SelectItem value="api">API production</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Model ảnh</Label>
+                    <Select value={imageModel} onValueChange={setImageModel}>
+                      <SelectTrigger className="rounded-2xl">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="photoreal-v1">photoreal-v1</SelectItem>
+                        <SelectItem value="image-edit-pro">image-edit-pro</SelectItem>
+                        <SelectItem value="ad-shot-max">ad-shot-max</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Model video</Label>
+                    <Select value={videoModel} onValueChange={setVideoModel}>
+                      <SelectTrigger className="rounded-2xl">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="cinematic-video-v1">cinematic-video-v1</SelectItem>
+                        <SelectItem value="product-reel-pro">product-reel-pro</SelectItem>
+                        <SelectItem value="image-motion-max">image-motion-max</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>API key</Label>
+                    <Input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="Dán API key tại đây" className="rounded-2xl" />
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label>Endpoint</Label>
+                  <Input value={endpoint} onChange={(e) => setEndpoint(e.target.value)} className="rounded-2xl" />
+                </div>
+                <Separator />
+                <div className="rounded-2xl bg-slate-50 p-4 text-sm leading-6 text-slate-600">
+                  Backend nên có 3 route chính: <span className="font-medium text-slate-900">/api/generate</span> cho ghép ảnh và image-to-image, <span className="font-medium text-slate-900">/api/video</span> cho image-to-video, và <span className="font-medium text-slate-900">/api/upscale</span> để tăng độ chân thật sau cùng.
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
